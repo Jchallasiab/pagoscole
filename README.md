@@ -1,5 +1,5 @@
-# Andis Dev
-## _Turorial Login Register CRUD Laravel 10_
+# Julio Hallasi 
+## _Sistema pagos colegio_
 
 ## Features
 
