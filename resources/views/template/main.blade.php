@@ -330,7 +330,7 @@
 
             </div>
             <!-- Default to the left -->
-            <strong>Copyright &copy; 2026 <a href="https://pe.linkedin.com/in/julio-cesar-hallasi-ambrocio-a269701b2">Julio Hallasi</a>.</strong> All rights
+            <strong>Copyright &copy; 2026 <a href="/">JH</a>.</strong> All rights
             reserved.
         </footer>
     </div>
