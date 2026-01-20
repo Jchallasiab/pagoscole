@@ -11,6 +11,12 @@
 - Validation
 - Sweat Alert
 - Datatable
+- Register Estudiante
+- Edit Estudiante
+- Register Matricula
+- Register Pagos
+- Register Grado
+- Register Seccion
 - Javascript Validation
 - FontAwesome 6
 
