@@ -161,48 +161,64 @@
                                                     <span class="badge badge-info">Individual</span>
                                                 @endif
                                             </td>
-
                                             {{-- ACCIONES --}}
                                             <td>
                                                 {{-- VER PDF --}}
                                                 @if($p->voucher)
                                                     <a href="{{ route('voucher.view', basename($p->voucher)) }}"
-                                                       target="_blank"
-                                                       class="btn btn-danger btn-sm mb-1"
-                                                       title="Ver Comprobante">
+                                                    target="_blank"
+                                                    class="btn btn-danger btn-sm mb-1"
+                                                    title="Ver Comprobante">
                                                         <i class="fa-solid fa-file-pdf"></i>
                                                     </a>
                                                 @endif
 
-                                                {{-- SI ES GRUPAL → BLOQUEADO --}}
+                                                {{-- SI ES GRUPAL --}}
                                                 @if($grupo > 1)
+                                                    {{-- BLOQUEAR EDICIÓN --}}
                                                     <button class="btn btn-secondary btn-sm mb-1" disabled
                                                             title="Pertenece a un comprobante grupal — no editable">
                                                         <i class="fa-solid fa-lock"></i>
                                                     </button>
-                                                @else
-                                                    {{-- EDITAR --}}
-                                                    <a href="{{ route('payments.edit', $p->id) }}"
-                                                       class="btn btn-warning btn-sm mb-1"
-                                                       title="Editar Pago">
-                                                        <i class="fa-solid fa-pen-to-square"></i>
-                                                    </a>
 
-                                                    {{-- ELIMINAR --}}
-                                                    @if(auth()->user()->role === 'admin')
+                                                    {{-- PERMITIR ELIMINAR (solo admin y si tiene PDF) --}}
+                                                    @if($p->voucher && auth()->user()->role === 'admin')
                                                         <form action="{{ route('payments.destroy', $p->id) }}"
-                                                              method="POST"
-                                                              style="display:inline-block;">
+                                                            method="POST"
+                                                            style="display:inline-block;">
                                                             @csrf
                                                             @method('DELETE')
                                                             <button class="btn btn-danger btn-sm mb-1"
-                                                                    onclick="return confirm('¿Eliminar pago?')"
-                                                                    title="Eliminar Pago">
+                                                                    onclick="return confirm('⚠️ Este pago pertenece a un comprobante grupal.\n¿Deseas eliminarlo de todos modos?')"
+                                                                    title="Eliminar Pago Grupal">
+                                                                <i class="fa-solid fa-trash"></i>
+                                                            </button>
+                                                        </form>
+                                                    @endif
+                                                @else
+                                                    {{-- EDITAR --}}
+                                                    <a href="{{ route('payments.edit', $p->id) }}"
+                                                    class="btn btn-warning btn-sm mb-1"
+                                                    title="Editar Pago">
+                                                        <i class="fa-solid fa-pen-to-square"></i>
+                                                    </a>
+
+                                                    {{-- ELIMINAR (solo admin y si tiene PDF) --}}
+                                                    @if($p->voucher && auth()->user()->role === 'admin')
+                                                        <form action="{{ route('payments.destroy', $p->id) }}"
+                                                            method="POST"
+                                                            style="display:inline-block;">
+                                                            @csrf
+                                                            @method('DELETE')
+                                                            <button class="btn btn-danger btn-sm mb-1"
+                                                                    onclick="return confirm('¿Eliminar este pago y su comprobante PDF?')"
+                                                                    title="Eliminar Pago Individual">
                                                                 <i class="fa-solid fa-trash"></i>
                                                             </button>
                                                         </form>
                                                     @endif
                                                 @endif
+                                            </td>
                                             </td>
                                         </tr>
                                     @endforeach
