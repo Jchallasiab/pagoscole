@@ -11,9 +11,10 @@ class PaymentConceptController extends Controller
     /** ================= LISTAR ================= */
     public function index()
     {
-        $payment_concepts = PaymentConcept::orderBy('nombre')->get();
+        $payment_concepts = PaymentConcept::orderBy('nombre')->paginate(5);
         return view('payment_concepts.index', compact('payment_concepts'));
     }
+
 
     /** ================= FORMULARIO CREAR ================= */
     public function create()

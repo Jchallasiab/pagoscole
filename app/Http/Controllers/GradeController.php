@@ -15,7 +15,7 @@ class GradeController extends Controller
         $grades = Grade::with('level')
             ->orderBy('level_id')
             ->orderBy('nombre')
-            ->get();
+            ->paginate(5); // 🔹 Solo 5 registros por página
 
         return view('grades.index', compact('grades'));
     }
@@ -48,8 +48,8 @@ class GradeController extends Controller
 
         Grade::create([
             'level_id' => $request->level_id,
-            'nombre'   => $request->nombre,
-            'activo'   => $request->has('activo'), // ✅ AQUÍ ESTÁ LA CLAVE
+            'nombre'   => strtoupper(trim($request->nombre)), // 🔹 Normalizamos texto
+            'activo'   => $request->has('activo'),
         ]);
 
         return redirect()
@@ -86,8 +86,8 @@ class GradeController extends Controller
 
         $grade->update([
             'level_id' => $request->level_id,
-            'nombre'   => $request->nombre,
-            'activo'   => $request->has('activo'), // ✅ AQUÍ TAMBIÉN
+            'nombre'   => strtoupper(trim($request->nombre)),
+            'activo'   => $request->has('activo'),
         ]);
 
         return redirect()

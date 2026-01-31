@@ -62,7 +62,22 @@
 
                         <div class="col-md-6 mb-2">
                             <p><strong>Fecha Matrícula:</strong> {{ $enrollment->fecha_matricula }}</p>
-                            <p><strong>Monto Matrícula:</strong> S/. {{ number_format($enrollment->monto_matricula, 2) }}</p>
+                            @php
+                                $pagoMatricula = $enrollment->payments
+                                    ->first(function ($p) {
+                                        return $p->paymentConcept
+                                            && strtoupper($p->paymentConcept->nombre) === 'MATRICULA';
+                                    });
+                            @endphp
+
+                            <p>
+                                <strong>Monto Matrícula:</strong>
+                                S/.
+                                {{ $pagoMatricula
+                                    ? number_format($pagoMatricula->monto - $pagoMatricula->descuento, 2)
+                                    : '0.00'
+                                }}
+                            </p>
                             <p>
                                 <strong>Estado:</strong>
                                 <span class="badge 

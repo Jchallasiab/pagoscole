@@ -16,7 +16,7 @@ class SectionController extends Controller
         $sections = Section::with(['schoolYear', 'grade.level'])
             ->orderBy('school_year_id', 'desc')
             ->orderBy('id', 'desc')
-            ->get();
+            ->paginate(5); // 🔹 Muestra 5 por página
 
         return view('sections.index', compact('sections'));
     }

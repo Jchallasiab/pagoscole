@@ -290,6 +290,15 @@ document.addEventListener('DOMContentLoaded', () => {
     cargarSeccionesFiltro();
 });
 </script>
+<script>
+@if(session('voucher_id'))
+    // Esperar un momento para no interrumpir el mensaje de éxito
+    setTimeout(() => {
+        const voucherUrl = "{{ route('enrollments.voucher', session('voucher_id')) }}";
+        window.open(voucherUrl, '_blank'); // 🔥 abre PDF en nueva pestaña
+    }, 800);
+@endif
+</script>
 
 
 @endsection

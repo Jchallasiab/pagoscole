@@ -75,6 +75,15 @@
                                 @endforeach
                             </tbody>
                         </table>
+                         {{-- INFO + PAGINACIÓN --}}
+                        <div class="d-flex justify-content-between align-items-center flex-wrap mt-3">
+                            <small class="text-muted">
+                                Mostrando del {{ $payment_concepts->firstItem() }}
+                                al {{ $payment_concepts->lastItem() }}
+                                de un total de {{ $payment_concepts->total() }} registros
+                            </small>
+                            {{ $payment_concepts->appends(request()->query())->links('pagination::bootstrap-4') }}
+                        </div>
                     @endif
                 </div>
             </div>

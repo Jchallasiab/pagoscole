@@ -9,12 +9,15 @@ use App\Models\Level;
 use App\Models\Grade;
 use App\Models\Section;
 use App\Models\SchoolYear;
+use App\Models\PaymentConcept;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Milon\Barcode\DNS2D;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+
 
 require_once app_path('Libraries/fpdf.php');
 
@@ -109,6 +112,9 @@ class EnrollmentController extends Controller
         // 👌 Secciones NO se cargan aquí
         $sections = collect();
 
+        // 🧩 NUEVO: obtener los conceptos de pago activos
+        $paymentConcepts = PaymentConcept::where('activo', true)->get();
+
         return view(
             'enrollments.create',
             compact(
@@ -116,7 +122,8 @@ class EnrollmentController extends Controller
                 'levels',
                 'grades',
                 'sections',
-                'schoolYears'
+                'schoolYears',
+                'paymentConcepts' // 👈 importante
             )
         );
     }
@@ -126,86 +133,141 @@ class EnrollmentController extends Controller
     ========================== */
     public function store(Request $request)
     {
-        // =========================
-        // VALIDACIÓN
-        // =========================
-        $request->validate([
-            'student_id'     => 'required|exists:students,id',
-            'school_year_id' => 'required|exists:school_years,id',
-            'level_id'       => 'required|exists:levels,id',
+        DB::beginTransaction();
 
-            'grade_id' => [
-                'required',
-                Rule::exists('grades', 'id')
-                    ->where('level_id', $request->level_id),
-            ],
+        try {
 
-            'section_id' => [
-                'required',
-                Rule::exists('sections', 'id')
-                    ->where('grade_id', $request->grade_id)
-                    ->where('school_year_id', $request->school_year_id)
-                    ->where('activo', true),
-            ],
+            // =========================
+            // VALIDACIÓN
+            // =========================
+            $request->validate([
+                'student_id'     => 'required|exists:students,id',
+                'school_year_id' => 'required|exists:school_years,id',
+                'level_id'       => 'required|exists:levels,id',
 
-            'fecha_matricula' => 'required|date',
-            'monto_matricula' => 'required|numeric|min:0',
-        ]);
+                'grade_id' => [
+                    'required',
+                    Rule::exists('grades', 'id')
+                        ->where('level_id', $request->level_id),
+                ],
 
-        // =========================
-        // EVITAR MATRÍCULA DUPLICADA
-        // =========================
-        $existing = Enrollment::where('student_id', $request->student_id)
-            ->where('school_year_id', $request->school_year_id)
-            ->where('estado', 'pagado')
-            ->first();
+                'section_id' => [
+                    'required',
+                    Rule::exists('sections', 'id')
+                        ->where('grade_id', $request->grade_id)
+                        ->where('school_year_id', $request->school_year_id)
+                        ->where('activo', true),
+                ],
 
-        if ($existing) {
+                'fecha_matricula' => 'required|date',
+                'concepts'        => 'nullable|array',
+            ]);
+
+            // =========================
+            // EVITAR MATRÍCULA DUPLICADA
+            // =========================
+            $exists = Enrollment::where('student_id', $request->student_id)
+                ->where('school_year_id', $request->school_year_id)
+                ->exists();
+
+            if ($exists) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'student_id' => 'El estudiante ya está matriculado en este año.'
+                    ]);
+            }
+
+            // =========================
+            // CREAR MATRÍCULA
+            // =========================
+            $enrollment = Enrollment::create([
+                'student_id'      => $request->student_id,
+                'school_year_id'  => $request->school_year_id,
+                'level_id'        => $request->level_id,
+                'grade_id'        => $request->grade_id,
+                'section_id'      => $request->section_id,
+                'fecha_matricula' => $request->fecha_matricula,
+                'estado'          => 'pagado',
+            ]);
+
+            // =========================
+            // PAGOS
+            // =========================
+            if (is_array($request->concepts)) {
+
+                foreach ($request->concepts as $conceptId => $data) {
+
+                    if (!isset($data['selected'])) {
+                        continue;
+                    }
+
+                    $concept = PaymentConcept::find($conceptId);
+                    if (!$concept) continue;
+
+                    $monto     = (float) ($data['monto'] ?? 0);
+                    $descuento = (float) ($data['descuento'] ?? 0);
+                    $metodo    = isset($data['metodo_pago'])
+                        ? strtolower($data['metodo_pago'])
+                        : null;
+
+                    // 🔵 MENSUALIDADES
+                    if ($concept->es_mensual) {
+
+                        if (empty($data['periodos']) || !is_array($data['periodos'])) {
+                            continue;
+                        }
+
+                        foreach ($data['periodos'] as $periodo) {
+
+                            Payment::create([
+                                'enrollment_id'      => $enrollment->id,
+                                'payment_concept_id' => $conceptId,
+                                'periodo'            => $periodo, // YYYY-MM
+                                'monto'              => $monto,
+                                'descuento'          => $descuento,
+                                'fecha_pago'         => now(),
+                                'metodo_pago'        => $metodo,
+                                'estado'             => 'pagado',
+                            ]);
+                        }
+                    }
+                    // 🟡 CONCEPTO NORMAL
+                    else {
+
+                        Payment::create([
+                            'enrollment_id'      => $enrollment->id,
+                            'payment_concept_id' => $conceptId,
+                            'periodo'            => null,
+                            'monto'              => $monto,
+                            'descuento'          => $descuento,
+                            'fecha_pago'         => now(),
+                            'metodo_pago'        => $metodo,
+                            'estado'             => 'pagado',
+                        ]);
+                    }
+                }
+            }
+
+            DB::commit();
+            $this->generarVoucherFPDF($enrollment);
+
+            return redirect()
+            ->route('enrollments.index')
+            ->with([
+                'success' => 'Matrícula registrada correctamente.',
+                'voucher_id' => $enrollment->id,
+            ]);
+
+        } catch (\Throwable $e) {
+
+            DB::rollBack();
+
             return back()
-                ->withInput()
                 ->withErrors([
-                    'student_id' => 'El estudiante ya está matriculado en este año escolar.'
+                    'error' => $e->getMessage()
                 ]);
         }
-
-        // =========================
-        // CREAR MATRÍCULA (PRIMERO)
-        // =========================
-        $enrollment = Enrollment::create([
-            'student_id'      => $request->student_id,
-            'school_year_id'  => $request->school_year_id,
-            'level_id'        => $request->level_id,
-            'grade_id'        => $request->grade_id,
-            'section_id'      => $request->section_id,
-            'fecha_matricula' => $request->fecha_matricula,
-            'monto_matricula' => $request->monto_matricula,
-            'estado'          => 'pagado',
-        ]);
-
-        // =========================
-        // REGISTRAR PAGO MATRÍCULA (DESPUÉS)
-        // =========================
-        $conceptMatricula = \App\Models\PaymentConcept::where('nombre', 'MATRÍCULA')->firstOrFail();
-
-        Payment::create([
-            'enrollment_id'      => $enrollment->id,
-            'payment_concept_id' => $conceptMatricula->id,
-            'periodo'            => null, // Matrícula NO usa periodo
-            'monto'              => $request->monto_matricula,
-            'descuento'          => 0,
-            'fecha_pago'         => now(),
-            'metodo_pago'        => 'efectivo',
-            'estado'             => 'pagado',
-        ]);
-
-        // =========================
-        // GENERAR VOUCHER
-        // =========================
-        $this->generarVoucherFPDF($enrollment);
-
-        return redirect()
-            ->route('enrollments.voucher', $enrollment->id)
-            ->with('success', 'Matrícula registrada correctamente.');
     }
     /* =========================
        PDF + QR
@@ -213,6 +275,7 @@ class EnrollmentController extends Controller
     private function generarVoucherFPDF(Enrollment $enrollment)
     {
         $student = $enrollment->student;
+        $payments = $enrollment->payments()->with('paymentConcept')->get();
 
         /* ======================
         GENERAR QR
@@ -232,7 +295,7 @@ class EnrollmentController extends Controller
         $pdf->AddPage();
 
         /* ======================
-        LOGO INSTITUCIÓN
+        LOGO
         ====================== */
         $logoPath = public_path('img/logotesla.jpg');
         if (file_exists($logoPath)) {
@@ -252,93 +315,82 @@ class EnrollmentController extends Controller
 
         $pdf->SetFont('Arial', '', 12);
         $pdf->SetX(45);
-        $pdf->Cell(
-            0,
-            8,
-            utf8_decode('COMPROBANTE DE MATRÍCULA ' . $enrollment->schoolYear->anio),
-            0,
-            1
-        );
+        $pdf->Cell(0, 8, utf8_decode('COMPROBANTE DE MATRÍCULA ' . $enrollment->schoolYear->anio), 0, 1);
 
         /* ======================
-        DATOS ESTUDIANTE
+        DATOS DEL ESTUDIANTE
         ====================== */
-        $pdf->Ln(20);
+        $pdf->Ln(18);
         $pdf->SetFont('Arial', 'B', 12);
         $pdf->Cell(0, 8, utf8_decode('DATOS DEL ESTUDIANTE'), 0, 1);
 
         $pdf->SetFont('Arial', '', 11);
-        $pdf->Cell(60, 8, utf8_decode('Nombre completo:'), 1);
-        $pdf->Cell(
-            0,
-            8,
-            utf8_decode($student->nombres . ' ' . $student->apellido_paterno . ' ' . $student->apellido_materno),
-            1,
-            1
-        );
+        $pdf->Cell(60, 8, 'Nombre:', 1);
+        $pdf->Cell(0, 8, utf8_decode($student->nombres.' '.$student->apellido_paterno.' '.$student->apellido_materno), 1, 1);
 
-        $pdf->Cell(60, 8, utf8_decode('DNI:'), 1);
+        $pdf->Cell(60, 8, 'DNI:', 1);
         $pdf->Cell(0, 8, $student->dni, 1, 1);
 
-        $pdf->Cell(60, 8, utf8_decode('Nivel:'), 1);
-        $pdf->Cell(0, 8, utf8_decode($enrollment->level->nombre), 1, 1);
-
-        $pdf->Cell(60, 8, utf8_decode('Grado:'), 1);
-        $pdf->Cell(0, 8, utf8_decode($enrollment->grade->nombre), 1, 1);
-
-        $pdf->Cell(60, 8, utf8_decode('Sección:'), 1);
-        $pdf->Cell(0, 8, utf8_decode($enrollment->section->nombre), 1, 1);
+        $pdf->Cell(60, 8, utf8_decode('Nivel / Grado / Sección:'), 1);
+        $pdf->Cell(0, 8, utf8_decode(
+            $enrollment->level->nombre.' - '.$enrollment->grade->nombre.' - '.$enrollment->section->nombre
+        ), 1, 1);
 
         $pdf->Cell(60, 8, utf8_decode('Fecha matrícula:'), 1);
         $pdf->Cell(0, 8, $enrollment->fecha_matricula, 1, 1);
 
-        $pdf->Cell(60, 8, utf8_decode('Monto:'), 1);
-        $pdf->Cell(
-            0,
-            8,
-            'S/. ' . number_format($enrollment->monto_matricula, 2),
-            1,
-            1
-        );
+        /* ======================
+        TABLA DE CONCEPTOS PAGADOS
+        ====================== */
+        $pdf->Ln(10);
+        $pdf->SetFont('Arial', 'B', 12);
+        $pdf->Cell(0, 8, utf8_decode('DETALLE DE PAGOS'), 0, 1);
+
+        // Encabezados
+        $pdf->SetFont('Arial', 'B', 10);
+        $pdf->Cell(45, 8, 'Concepto', 1);
+        $pdf->Cell(25, 8, 'Periodo', 1);
+        $pdf->Cell(25, 8, 'Monto', 1);
+        $pdf->Cell(25, 8, 'Desc.', 1);
+        $pdf->Cell(25, 8, 'Total', 1);
+        $pdf->Cell(30, 8, 'Metodo', 1, 1);
+
+        $pdf->SetFont('Arial', '', 10);
+        $totalGeneral = 0;
+
+        foreach ($payments as $p) {
+            $total = $p->monto - $p->descuento;
+            $totalGeneral += $total;
+
+            $pdf->Cell(45, 8, utf8_decode($p->paymentConcept->nombre), 1);
+            $pdf->Cell(25, 8, utf8_decode($p->periodo ?? '—'), 1);
+            $pdf->Cell(25, 8, 'S/ '.number_format($p->monto, 2), 1);
+            $pdf->Cell(25, 8, 'S/ '.number_format($p->descuento, 2), 1);
+            $pdf->Cell(25, 8, 'S/ '.number_format($total, 2), 1);
+            $pdf->Cell(30, 8, ucfirst($p->metodo_pago), 1, 1);
+        }
+
+        // TOTAL GENERAL
+        $pdf->SetFont('Arial', 'B', 11);
+        $pdf->Cell(120, 8, 'TOTAL PAGADO', 1);
+        $pdf->Cell(55, 8, 'S/ '.number_format($totalGeneral, 2), 1, 1);
 
         /* ======================
-        FOTO ESTUDIANTE Y QR LADO A LADO
+        FOTO + QR
         ====================== */
-        $yStart = $pdf->GetY() + 15;
+        $y = $pdf->GetY() + 10;
 
-        // Tamaños
-        $fotoWidth = 40;
-        $fotoHeight = 50;
-        $qrWidth = 40;
-        $qrHeight = 40;
+        $fotoPath = $student->photo_path
+            ? storage_path('app/public/'.$student->photo_path)
+            : public_path('img/default-user.jpg');
 
-        // Posiciones X
-        $xFoto = 25;
-        $xQR = 120;
-
-        // Foto del estudiante
-        $fotoPath = null;
-        if (!empty($student->photo_path)) {
-            $fotoPath = storage_path('app/public/' . $student->photo_path);
+        if (file_exists($fotoPath)) {
+            $pdf->Image($fotoPath, 25, $y, 35, 45);
         }
-        if (!$fotoPath || !file_exists($fotoPath)) {
-            $fotoPath = public_path('img/default-user.jpg');
-        }
-        $pdf->Image($fotoPath, $xFoto, $yStart, $fotoWidth, $fotoHeight);
-        $pdf->SetXY($xFoto, $yStart + $fotoHeight + 2);
-        $pdf->SetFont('Arial', '', 10);
-        $pdf->Cell($fotoWidth, 6, utf8_decode('Foto del estudiante'), 0, 0, 'C');
 
-        // QR
         if (file_exists($qrPath)) {
-            $pdf->Image($qrPath, $xQR, $yStart, $qrWidth, $qrHeight);
+            $pdf->Image($qrPath, 140, $y, 35, 35);
         }
-        $pdf->SetXY($xQR, $yStart + $qrHeight + 2);
-        $pdf->SetFont('Arial', '', 10);
-        $pdf->Cell($qrWidth, 6, utf8_decode('Código QR'), 0, 0, 'C');
-
-        // Ajustar Y del PDF
-        $pdf->SetY(max($yStart + $fotoHeight + 10, $yStart + $qrHeight + 10));
 
         /* ======================
         GUARDAR PDF
@@ -379,7 +431,9 @@ class EnrollmentController extends Controller
             'level',
             'grade',
             'section',
-            'schoolYear'
+            'schoolYear',
+            'payments',
+            'payments.paymentConcept'
         ])->findOrFail($id);
 
         $students = Student::where('estado', 'activo')
@@ -388,16 +442,19 @@ class EnrollmentController extends Controller
 
         $levels = Level::select('id', 'nombre')->get();
 
-        // 👌 Cargar TODOS los grados (como en create)
+        // 👌 Todos los grados (igual que create)
         $grades = Grade::select('id', 'nombre', 'level_id')->get();
 
-        // 👌 Secciones filtradas según la matrícula actual
+        // 👌 Secciones según matrícula actual
         $sections = Section::where('school_year_id', $enrollment->school_year_id)
             ->where('grade_id', $enrollment->grade_id)
             ->where('activo', true)
             ->get();
 
         $schoolYears = SchoolYear::select('id', 'nombre')->get();
+
+        // 🔑 ESTA LÍNEA ES LA QUE FALTABA
+        $paymentConcepts = PaymentConcept::where('activo', true)->get();
 
         return view(
             'enrollments.edit',
@@ -407,102 +464,134 @@ class EnrollmentController extends Controller
                 'levels',
                 'grades',
                 'sections',
-                'schoolYears'
+                'schoolYears',
+                'paymentConcepts' // 👈 IMPORTANTE
             )
         );
     }
-
     /* =========================
        ACTUALIZAR MATRÍCULA
     ========================== */
     public function update(Request $request, $id)
     {
-        $enrollment = Enrollment::findOrFail($id);
+        DB::beginTransaction();
 
-        /* =========================
-        VALIDACIÓN
-        ========================== */
-        $request->validate([
-            'student_id'     => 'required|exists:students,id',
-            'school_year_id' => 'required|exists:school_years,id',
-            'level_id'       => 'required|exists:levels,id',
+        try {
 
-            'grade_id' => [
-                'required',
-                Rule::exists('grades', 'id')
-                    ->where('level_id', $request->level_id),
-            ],
+            // =========================
+            // VALIDACIÓN
+            // =========================
+            $request->validate([
+                'student_id'     => 'required|exists:students,id',
+                'school_year_id' => 'required|exists:school_years,id',
+                'level_id'       => 'required|exists:levels,id',
+                'grade_id'       => 'required|exists:grades,id',
+                'section_id'     => 'required|exists:sections,id',
+                'fecha_matricula'=> 'required|date',
+                'concepts'       => 'nullable|array',
+            ]);
 
-            'section_id' => [
-                'required',
-                Rule::exists('sections', 'id')
-                    ->where('grade_id', $request->grade_id)
-                    ->where('school_year_id', $request->school_year_id)
-                    ->where('activo', true),
-            ],
+            // =========================
+            // MATRÍCULA
+            // =========================
+            $enrollment = Enrollment::findOrFail($id);
 
-            'fecha_matricula' => 'required|date',
-            'monto_matricula' => 'required|numeric|min:0',
-            'estado'          => 'required|in:pendiente,pagado,validado',
-        ]);
+            $enrollment->update([
+                'student_id'      => $request->student_id,
+                'school_year_id'  => $request->school_year_id,
+                'level_id'        => $request->level_id,
+                'grade_id'        => $request->grade_id,
+                'section_id'      => $request->section_id,
+                'fecha_matricula' => $request->fecha_matricula,
+                // ⚠️ estado NO se toca
+            ]);
 
-        /* =========================
-        EVITAR MATRÍCULA DUPLICADA
-        ========================== */
-        $duplicado = Enrollment::where('student_id', $request->student_id)
-            ->where('school_year_id', $request->school_year_id)
-            ->where('estado', 'pagado')
-            ->where('id', '!=', $enrollment->id)
-            ->first();
+            // =========================
+            // ELIMINAR PAGOS ANTERIORES
+            // =========================
+            Payment::where('enrollment_id', $enrollment->id)->delete();
 
-        if ($duplicado) {
-            return back()
-                ->withInput()
-                ->withErrors([
-                    'student_id' => 'El estudiante ya está matriculado en este año escolar.'
-                ]);
-        }
+            // =========================
+            // REGISTRAR PAGOS NUEVOS
+            // =========================
+            if (is_array($request->concepts)) {
 
-        /* =========================
-        ACTUALIZAR MATRÍCULA
-        ========================== */
-        $enrollment->update([
-            'student_id'      => $request->student_id,
-            'school_year_id'  => $request->school_year_id,
-            'level_id'        => $request->level_id,
-            'grade_id'        => $request->grade_id,
-            'section_id'      => $request->section_id,
-            'fecha_matricula' => $request->fecha_matricula,
-            'monto_matricula' => $request->monto_matricula,
-            'estado'          => $request->estado,
-        ]);
+                foreach ($request->concepts as $conceptId => $data) {
 
-        /* =========================
-        SINCRONIZAR PAGO MATRÍCULA
-        ========================== */
-        $pagoMatricula = Payment::where('enrollment_id', $enrollment->id)
-            ->whereHas('paymentConcept', function ($q) {
-                $q->where('nombre', 'MATRÍCULA');
-            })
-            ->first();
+                    if (!isset($data['selected'])) continue;
 
-        if ($pagoMatricula) {
-            $pagoMatricula->update([
-                'monto'  => $request->monto_matricula,
-                'estado' => $request->estado === 'pagado' ? 'pagado' : 'pendiente',
+                    $concept = PaymentConcept::find($conceptId);
+                    if (!$concept) continue;
+
+                    $monto     = (float) ($data['monto'] ?? 0);
+                    $descuento = (float) ($data['descuento'] ?? 0);
+                    $metodo    = strtolower($data['metodo_pago'] ?? '');
+
+                    // =========================
+                    // 🔵 MENSUALIDADES
+                    // =========================
+                    if ($concept->es_mensual) {
+
+                        if (empty($data['periodos'])) continue;
+
+                        foreach ($data['periodos'] as $periodo) {
+
+                            // 🔒 NORMALIZAR YYYY-MM
+                            if (!str_contains($periodo, '-')) {
+                                $periodo = date('Y') . '-' . $periodo;
+                            }
+
+                            Payment::create([
+                                'enrollment_id'      => $enrollment->id,
+                                'payment_concept_id' => $conceptId,
+                                'periodo'            => $periodo, // ✅ 2026-03
+                                'monto'              => $monto,
+                                'descuento'          => $descuento,
+                                'fecha_pago'         => now(),
+                                'metodo_pago'        => $metodo,
+                                'estado'             => 'pagado',
+                            ]);
+                        }
+
+                    }
+                    // =========================
+                    // 🟡 CONCEPTO NORMAL
+                    // =========================
+                    else {
+
+                        Payment::create([
+                            'enrollment_id'      => $enrollment->id,
+                            'payment_concept_id' => $conceptId,
+                            'periodo'            => null,
+                            'monto'              => $monto,
+                            'descuento'          => $descuento,
+                            'fecha_pago'         => now(),
+                            'metodo_pago'        => $metodo,
+                            'estado'             => 'pagado',
+                        ]);
+                    }
+                }
+            }
+
+            DB::commit();
+
+            // =========================
+            // REGENERAR PDF
+            // =========================
+            $this->generarVoucherFPDF($enrollment);
+
+            return redirect()
+                ->route('enrollments.index')
+                ->with('success', 'Matrícula actualizada correctamente.');
+
+        } catch (\Throwable $e) {
+
+            DB::rollBack();
+
+            return back()->withErrors([
+                'error' => $e->getMessage()
             ]);
         }
-
-        /* =========================
-        REGENERAR VOUCHER
-        ========================== */
-        if ($request->estado === 'pagado') {
-            $this->generarVoucherFPDF($enrollment);
-        }
-
-        return redirect()
-            ->route('enrollments.index')
-            ->with('success', 'Matrícula actualizada correctamente.');
     }
 
     /* =========================

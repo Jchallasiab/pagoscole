@@ -88,11 +88,17 @@
                                         <th>FECHA PAGO</th>
                                         <th>MÉTODO</th>
                                         <th>ESTADO</th>
+                                        <th>COMPROBANTE</th>
                                         <th>ACCIONES</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     @foreach($payments as $p)
+                                        @php
+                                            // Cantidad de pagos que comparten el mismo PDF (voucher)
+                                            $grupo = \App\Models\Payment::where('voucher', $p->voucher)->count();
+                                        @endphp
+
                                         <tr>
                                             <td>{{ $loop->iteration + ($payments->currentPage()-1)*$payments->perPage() }}</td>
 
@@ -147,37 +153,55 @@
                                                 </span>
                                             </td>
 
+                                            {{-- COMPROBANTE --}}
+                                            <td>
+                                                @if($grupo > 1)
+                                                    <span class="badge badge-warning">Grupal</span>
+                                                @else
+                                                    <span class="badge badge-info">Individual</span>
+                                                @endif
+                                            </td>
+
                                             {{-- ACCIONES --}}
                                             <td>
-                                                {{-- PDF --}}
+                                                {{-- VER PDF --}}
                                                 @if($p->voucher)
-                                                    <a href="{{ route('payments.pdf', $p->id) }}"
-                                                    target="_blank"
-                                                    class="btn btn-danger btn-sm mb-1"
-                                                    title="Ver Comprobante">
+                                                    <a href="{{ route('voucher.view', basename($p->voucher)) }}"
+                                                       target="_blank"
+                                                       class="btn btn-danger btn-sm mb-1"
+                                                       title="Ver Comprobante">
                                                         <i class="fa-solid fa-file-pdf"></i>
                                                     </a>
                                                 @endif
 
-                                                {{-- EDITAR --}}
-                                                <a href="{{ route('payments.edit', $p->id) }}"
-                                                class="btn btn-warning btn-sm mb-1"
-                                                title="Editar Pago">
-                                                    <i class="fa-solid fa-pen-to-square"></i>
-                                                </a>
+                                                {{-- SI ES GRUPAL → BLOQUEADO --}}
+                                                @if($grupo > 1)
+                                                    <button class="btn btn-secondary btn-sm mb-1" disabled
+                                                            title="Pertenece a un comprobante grupal — no editable">
+                                                        <i class="fa-solid fa-lock"></i>
+                                                    </button>
+                                                @else
+                                                    {{-- EDITAR --}}
+                                                    <a href="{{ route('payments.edit', $p->id) }}"
+                                                       class="btn btn-warning btn-sm mb-1"
+                                                       title="Editar Pago">
+                                                        <i class="fa-solid fa-pen-to-square"></i>
+                                                    </a>
 
-                                                {{-- ELIMINAR --}}
-                                                @if(auth()->user()->role === 'admin')
-                                                    <form action="{{ route('payments.destroy', $p->id) }}"
-                                                        method="POST"
-                                                        style="display:inline-block;">
-                                                        @csrf
-                                                        @method('DELETE')
-                                                        <button class="btn btn-danger btn-sm mb-1"
-                                                                onclick="return confirm('¿Eliminar pago?')">
-                                                            <i class="fa-solid fa-trash"></i>
-                                                        </button>
-                                                    </form>
+                                                    {{-- ELIMINAR --}}
+                                                    @if(auth()->user()->role === 'admin')
+                                                        <form action="{{ route('payments.destroy', $p->id) }}"
+                                                              method="POST"
+                                                              style="display:inline-block;">
+                                                            @csrf
+                                                            @method('DELETE')
+                                                            <button class="btn btn-danger btn-sm mb-1"
+                                                                    onclick="return confirm('¿Eliminar pago?')"
+                                                                    title="Eliminar Pago">
+                                                                <i class="fa-solid fa-trash"></i>
+                                                            </button>
+                                                        </form>
+                                                    @endif
                                                 @endif
                                             </td>
                                         </tr>
@@ -245,6 +269,12 @@
         </div>
     </div>
 </div>
+
+@if(session('voucher_pdf'))
+<script>
+    window.open("{{ session('voucher_pdf') }}", "_blank");
+</script>
+@endif
 
 {{-- ================= JS ================= --}}
 <script>

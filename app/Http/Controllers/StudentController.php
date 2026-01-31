@@ -116,4 +116,32 @@ class StudentController extends Controller
         return redirect()->route('students.index')
             ->with('success', 'Estudiante eliminado correctamente.');
     }
+   public function search(Request $request)
+    {
+        $term = trim($request->term ?? '');
+
+        if ($term === '') {
+            return response()->json([]);
+        }
+
+        $students = Student::where('estado', 'activo')
+            ->where(function ($query) use ($term) {
+                $query->where('nombres', 'LIKE', "%{$term}%")
+                    ->orWhere('apellido_paterno', 'LIKE', "%{$term}%")
+                    ->orWhere('apellido_materno', 'LIKE', "%{$term}%");
+            })
+            ->orderBy('apellido_paterno')
+            ->limit(20)
+            ->get();
+
+        // 🔥 Formato compatible con Select2
+        $formatted = $students->map(function ($s) {
+            return [
+                'id' => $s->id,
+                'text' => "{$s->nombres} {$s->apellido_paterno} {$s->apellido_materno}",
+            ];
+        });
+
+        return response()->json($formatted);
+    }
 }

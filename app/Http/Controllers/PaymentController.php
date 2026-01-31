@@ -64,7 +64,7 @@ class PaymentController extends Controller
         }
 
         // Ordenar y paginar
-        $payments = $query->orderBy('payments.fecha_pago', 'desc')
+        $payments = $query->orderBy('payments.updated_at', 'desc')
             ->paginate(5)
             ->appends($request->query());
 
@@ -136,100 +136,173 @@ class PaymentController extends Controller
     {
         $request->validate([
             'enrollment_id' => 'required|exists:enrollments,id',
-            'payment_concept_id' => 'required|exists:payment_concepts,id',
-            'periodo' => 'nullable|string|max:7',
-            'monto' => 'required|numeric|min:0',
-            'descuento' => 'nullable|numeric|min:0',
-            'metodo_pago' => 'required|in:efectivo,yape,plin,transferencia',
+            'conceptos'     => 'required|array|min:1',
+            'metodo_pago'   => 'required|in:efectivo,yape,plin,transferencia',
         ]);
 
         DB::beginTransaction();
 
         try {
-            // 🔹 Matrícula
             $enrollment = Enrollment::findOrFail($request->enrollment_id);
+            $payments = collect();
 
-            // 🔹 Concepto
-            $concept = PaymentConcept::findOrFail($request->payment_concept_id);
+            foreach ($request->conceptos as $conceptId => $data) {
+                if (!isset($data['activo'])) continue; // Solo conceptos seleccionados
 
-            // 🔹 Validar duplicado (concepto + periodo)
-            $existePago = Payment::where('enrollment_id', $enrollment->id)
-                ->where('payment_concept_id', $concept->id)
-                ->where('periodo', $request->periodo)
-                ->exists();
+                $concept   = PaymentConcept::findOrFail($conceptId);
+                $monto     = $data['monto'] ?? 0;
+                $descuento = min($data['descuento'] ?? 0, $monto);
 
-            if ($existePago) {
-                return back()
-                    ->withInput()
-                    ->withErrors([
-                        'periodo' => 'Ya existe un pago para este periodo y concepto.'
-                    ]);
+                // 🔹 Si es mensual, crear un pago por cada mes seleccionado
+                if ($concept->es_mensual) {
+                    $periodos = $request->input('periodos', []);
+
+                    if (empty($periodos)) {
+                        throw new \Exception("Debe seleccionar al menos un mes para el concepto {$concept->nombre}");
+                    }
+
+                    foreach ($periodos as $periodo) {
+                        $existe = Payment::where('enrollment_id', $enrollment->id)
+                            ->where('payment_concept_id', $concept->id)
+                            ->where('periodo', $periodo)
+                            ->exists();
+
+                        if ($existe) {
+                            throw new \Exception("El mes {$periodo} del concepto {$concept->nombre} ya está pagado.");
+                        }
+
+                        $payments->push(
+                            Payment::create([
+                                'enrollment_id'      => $enrollment->id,
+                                'payment_concept_id' => $concept->id,
+                                'periodo'            => $periodo,
+                                'monto'              => $monto,
+                                'descuento'          => $descuento,
+                                'fecha_pago'         => now(),
+                                'metodo_pago'        => $request->metodo_pago,
+                                'estado'             => 'pagado',
+                            ])
+                        );
+                    }
+                } 
+                // 🔹 Si NO es mensual, solo un registro
+                else {
+                    $existe = Payment::where('enrollment_id', $enrollment->id)
+                        ->where('payment_concept_id', $concept->id)
+                        ->whereNull('periodo')
+                        ->exists();
+
+                    if ($existe) {
+                        throw new \Exception("El concepto {$concept->nombre} ya fue pagado.");
+                    }
+
+                    $payments->push(
+                        Payment::create([
+                            'enrollment_id'      => $enrollment->id,
+                            'payment_concept_id' => $concept->id,
+                            'periodo'            => null,
+                            'monto'              => $monto,
+                            'descuento'          => $descuento,
+                            'fecha_pago'         => now(),
+                            'metodo_pago'        => $request->metodo_pago,
+                            'estado'             => 'pagado',
+                        ])
+                    );
+                }
             }
 
+            if ($payments->isEmpty()) {
+                throw new \Exception("No se seleccionó ningún concepto válido para pagar.");
+            }
 
-            // 🔹 Descuento seguro
-            $descuento = min($request->descuento ?? 0, $request->monto);
-
-            // ✅ GUARDAR PAGO
-            $payment = Payment::create([
-                'enrollment_id'       => $enrollment->id,
-                'payment_concept_id'  => $concept->id,
-                'periodo'             => $request->periodo,
-                'monto'               => $request->monto,
-                'descuento'           => $descuento,
-                'fecha_pago'          => now(),
-                'metodo_pago'         => $request->metodo_pago,
-                'estado'              => 'pagado',
-            ]);
-
-            // 🔹 Cargar relaciones para el PDF
-            $payment->load([
+            // ✅ Generar PDF con todos los pagos nuevos
+            $payments = Payment::with([
+                'paymentConcept',
                 'enrollment.student',
                 'enrollment.level',
                 'enrollment.grade',
                 'enrollment.section',
-                'paymentConcept',
-            ]);
+            ])->whereIn('id', $payments->pluck('id'))
+            ->orderBy('payment_concept_id')
+            ->get();
 
-            // 📄 GENERAR PDF
-            $pdf = Pdf::loadView('payments.pdf', compact('payment'));
+            $pdf = Pdf::loadView('payments.pdf', [
+                'payments' => $payments
+            ])->setPaper('A4');
 
-            // 🔹 Guardar voucher
-            $ruta = "vouchers/voucher_pago_{$payment->id}.pdf";
-            Storage::disk('public')->put($ruta, $pdf->output());
+            $voucher = 'vouchers/pago_' . time() . '.pdf';
+            Storage::disk('public')->put($voucher, $pdf->output());
 
-            // 🔹 Guardar ruta del voucher
-            $payment->update([
-                'voucher' => $ruta,
-            ]);
+            // 🔹 Asignar voucher a todos los pagos creados
+            Payment::whereIn('id', $payments->pluck('id'))
+                ->update(['voucher' => $voucher]);
 
             DB::commit();
 
-            // ✅ ENVIAR DIRECTO AL PDF
-            DB::commit();
-            return redirect()->route('payments.pdf', $payment->id);
+            return redirect()
+                ->route('payments.index')
+                ->with('success', 'Pagos registrados correctamente.')
+                ->with('voucher_pdf', route('voucher.view', basename($voucher)));
 
         } catch (\Throwable $e) {
             DB::rollBack();
-
-            return back()
-                ->withInput()
-                ->withErrors(['error' => $e->getMessage()]);
+            return back()->withErrors(['error' => $e->getMessage()]);
         }
     }
 
+
   /** ================= VER PDF ================= */
-    public function pdf(Payment $payment)
+    public function pdf($enrollmentId)
     {
-        $payment->load('enrollment.student', 'paymentConcept');
+        // Obtener pagos con relaciones necesarias
+        $payments = Payment::with([
+            'paymentConcept',
+            'enrollment.student',
+            'enrollment.level',
+            'enrollment.grade',
+            'enrollment.section'
+        ])
+        ->where('enrollment_id', $enrollmentId)
+        ->orderBy('periodo')
+        ->get();
 
-        // 🔹 Recalcular total y descuento (por seguridad)
-        $payment->monto = $payment->monto - $payment->descuento;
+        // Verificar si hay pagos
+        if ($payments->isEmpty()) {
+            // Crear un objeto vacío con datos del estudiante (si quieres)
+            $student = Enrollment::with('student')->find($enrollmentId)?->student;
+            return Pdf::loadView('payments.pdf', compact('payments', 'student'))
+                    ->setPaper('A4')
+                    ->setOption('defaultFont', 'DejaVu Sans')
+                    ->stream('comprobante_pagos.pdf');
+        }
 
-        $pdf = Pdf::loadView('payments.pdf', compact('payment'))
-            ->setPaper('A4')
-            ->setOption('defaultFont', 'DejaVu Sans');
-        return $pdf->stream("voucher_pago_{$payment->id}.pdf");
+        // Guardar el PDF en storage (opcional)
+        $filename = 'pago_' . time() . '.pdf';
+        $path = storage_path('app/public/vouchers/' . $filename);
+
+        $pdf = Pdf::loadView('payments.pdf', compact('payments'))
+                ->setPaper('A4')
+                ->setOption('defaultFont', 'DejaVu Sans');
+
+        $pdf->save($path);
+
+        // Actualizar ruta en la base de datos del primer pago (opcional)
+        Payment::where('enrollment_id', $enrollmentId)
+            ->update(['voucher' => 'vouchers/' . $filename]);
+
+        return $pdf->stream($filename);
+    }
+    public function verVoucher($filename)
+    {
+        $path = storage_path('app/public/vouchers/' . $filename);
+
+        if (!file_exists($path)) {
+            abort(404, 'El voucher no existe o fue eliminado.');
+        }
+
+        return response()->file($path, [
+            'Content-Type' => 'application/pdf',
+        ]);
     }
 
     /** ================= EDITAR ================= */
@@ -238,54 +311,77 @@ class PaymentController extends Controller
         $payment->load('enrollment.student', 'paymentConcept');
         $conceptos = PaymentConcept::where('activo', true)->get();
 
-        return view('payments.edit', compact('payment', 'conceptos'));
+        return view('payments.edit', [
+            'payment' => $payment,
+            'conceptos' => $conceptos,
+            'periodo_actual' => $payment->periodo,
+        ]);
     }
 
+
+    /** ================= ACTUALIZAR ================= */
     /** ================= ACTUALIZAR ================= */
     public function update(Request $request, Payment $payment)
     {
         $request->validate([
             'payment_concept_id' => 'required|exists:payment_concepts,id',
-            'periodo' => 'nullable|string|max:7',
-            'monto' => 'required|numeric|min:0',
-            'descuento' => 'nullable|numeric|min:0',
-            'metodo_pago' => 'required|in:efectivo,yape,plin,transferencia',
-            'estado' => 'required|in:pendiente,pagado,validado',
+            'periodo'            => 'nullable|string|max:7',
+            'monto'              => 'required|numeric|min:0',
+            'descuento'          => 'nullable|numeric|min:0',
+            'metodo_pago'        => 'required|in:efectivo,yape,plin,transferencia',
+            'estado'             => 'required|in:pendiente,pagado,validado',
         ]);
 
-        $concept = PaymentConcept::findOrFail($request->payment_concept_id);
-        $descuento = min($request->descuento ?? 0, $request->monto);
+        DB::beginTransaction();
 
-        $payment->update([
-            'payment_concept_id' => $concept->id,
-            'periodo' => $request->periodo,
-            'monto' => $request->monto,
-            'descuento' => $descuento,
-            'metodo_pago' => $request->metodo_pago,
-            'estado' => $request->estado,
-        ]);
+        try {
+            // 🔹 Obtener concepto y calcular descuento
+            $concept   = PaymentConcept::findOrFail($request->payment_concept_id);
+            $descuento = min($request->descuento ?? 0, $request->monto);
 
-        // 🔥 Regenerar PDF
-        $payment->load('enrollment.student', 'paymentConcept');
-        $pdf = PDF::loadView('payments.pdf', compact('payment'));
-        $ruta = "vouchers/voucher_pago_{$payment->id}.pdf";
-        Storage::disk('public')->put($ruta, $pdf->output());
-        $payment->update(['voucher' => $ruta]);
+            // 🔹 Actualizar solo este pago
+            $payment->update([
+                'payment_concept_id' => $concept->id,
+                'periodo'            => $request->periodo,
+                'monto'              => $request->monto,
+                'descuento'          => $descuento,
+                'metodo_pago'        => $request->metodo_pago,
+                'estado'             => $request->estado,
+                'fecha_pago'         => now(),
+            ]);
 
-        return redirect()->route('payments.index')
-            ->with('success', 'Pago actualizado correctamente y PDF regenerado.');
-    }
+            // 🔹 Cargar relaciones necesarias para el PDF
+            $payment->load([
+                'paymentConcept',
+                'enrollment.student',
+                'enrollment.level',
+                'enrollment.grade',
+                'enrollment.section',
+            ]);
 
-    /** ================= ELIMINAR ================= */
-    public function destroy(Payment $payment)
-    {
-        if ($payment->voucher && Storage::disk('public')->exists($payment->voucher)) {
-            Storage::disk('public')->delete($payment->voucher);
+            // 🔹 Generar PDF solo con este pago
+            $pdf = Pdf::loadView('payments.pdf', [
+                'payments' => collect([$payment]) // 👈 Solo este pago
+            ])->setPaper('A4');
+
+            // 🔹 Guardar el nuevo comprobante PDF
+            $voucher = 'vouchers/pago_' . $payment->id . '_' . time() . '.pdf';
+            Storage::disk('public')->put($voucher, $pdf->output());
+
+            // 🔹 Actualizar la ruta del voucher en este pago
+            $payment->update(['voucher' => $voucher]);
+
+            DB::commit();
+
+            return redirect()
+                ->route('payments.index')
+                ->with('success', 'Pago actualizado correctamente y PDF regenerado.')
+                ->with('voucher_pdf', route('voucher.view', basename($voucher)));
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return back()->withErrors(['error' => $e->getMessage()]);
         }
-
-        $payment->delete();
-
-        return redirect()->route('payments.index')
-            ->with('success', 'Pago eliminado correctamente.');
     }
+
 }

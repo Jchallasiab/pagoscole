@@ -6,14 +6,13 @@
 
     <style>
         body {
-            font-family: DejaVu Sans, sans-serif;
+            font-family: Arial, Helvetica, sans-serif;
             font-size: 12px;
             color: #000;
             margin: 0;
             padding: 0;
         }
 
-        /* ================= HEADER ================= */
         .header {
             width: 100%;
             border-bottom: 2px solid #000;
@@ -29,22 +28,19 @@
             width: 80px;
         }
 
-        .title h2 {
+        .title h2, .title h3 {
             margin: 0;
-            font-size: 16px;
+            text-transform: uppercase;
         }
 
-        .title h3 {
-            margin: 0;
-            font-size: 15px;
-        }
+        .title h2 { font-size: 16px; }
+        .title h3 { font-size: 15px; }
 
         .title p {
             margin: 4px 0 0 0;
             font-size: 12px;
         }
 
-        /* ================= BOX ================= */
         .box {
             border: 1px solid #000;
             padding: 10px;
@@ -60,9 +56,7 @@
             padding: 4px;
         }
 
-        /* ================= CONCEPTOS ================= */
-        .conceptos th,
-        .conceptos td {
+        .conceptos th, .conceptos td {
             border: 1px solid #000;
             padding: 6px;
             text-align: center;
@@ -72,7 +66,6 @@
             background-color: #f2f2f2;
         }
 
-        /* ================= TOTALES ================= */
         .totals {
             width: 100%;
             margin-top: 10px;
@@ -92,21 +85,27 @@
             width: 30%;
         }
 
-        /* ================= FOOTER ================= */
         .footer {
             margin-top: 35px;
             text-align: center;
             font-size: 11px;
         }
+
+        .align-right {
+            text-align: right;
+        }
     </style>
 </head>
-
 <body>
 
 @php
-    $total     = $payment->monto;          // monto final ya pagado
-    $descuento = $payment->descuento ?? 0;
-    $subtotal  = $total + $descuento;      // solo para mostrar
+    $subtotal  = $payments->sum(fn($p) => $p->monto);      // Precio original sin descuento
+    $descuento = $payments->sum('descuento');              // Total descuentos
+    $total     = $subtotal - $descuento;                   // Total realmente pagado
+    $payment   = $payments->first();
+
+    // Detectar si hay mensualidades
+    $tieneMensualidades = $payments->contains(fn($p) => $p->paymentConcept->es_mensual ?? false);
 @endphp
 
 {{-- ================= HEADER ================= --}}
@@ -121,19 +120,7 @@
                 <h3>TESLA BLACK HORSE</h3>
                 <p>
                     <strong>Comprobante de Pago</strong><br>
-                    {{ $payment->paymentConcept->nombre ?? 'Concepto no definido' }}
-
-                    @if($payment->periodo)
-                        @php
-                            try {
-                                $periodo = \Carbon\Carbon::createFromFormat('Y-m', $payment->periodo)
-                                            ->translatedFormat('F Y');
-                            } catch (\Exception $e) {
-                                $periodo = $payment->periodo;
-                            }
-                        @endphp
-                        — <small>{{ $periodo }}</small>
-                    @endif
+                    {{ $tieneMensualidades ? 'Mensualidades y otros conceptos cancelados' : 'Pago de conceptos escolares' }}
                 </p>
             </td>
         </tr>
@@ -158,9 +145,9 @@
         <tr>
             <td><strong>Nivel / Grado / Sección:</strong></td>
             <td>
-                {{ $payment->enrollment->level->nombre ?? '-' }} /
-                {{ $payment->enrollment->grade->nombre ?? '-' }} /
-                {{ $payment->enrollment->section->nombre ?? '-' }}
+                {{ $payment->enrollment->level->nombre }} /
+                {{ $payment->enrollment->grade->nombre }} /
+                {{ $payment->enrollment->section->nombre }}
             </td>
         </tr>
         <tr>
@@ -169,36 +156,49 @@
         </tr>
         <tr>
             <td><strong>Fecha de Pago:</strong></td>
-            <td>{{ \Carbon\Carbon::parse($payment->fecha_pago)->format('d/m/Y') }}</td>
-        </tr>
-        <tr>
-            <td><strong>Comprobante N°:</strong></td>
-            <td>{{ str_pad($payment->id, 6, '0', STR_PAD_LEFT) }}</td>
+            <td>{{ $payment->fecha_pago ? \Carbon\Carbon::parse($payment->fecha_pago)->format('d/m/Y') : \Carbon\Carbon::now()->format('d/m/Y') }}</td>
         </tr>
     </table>
 </div>
 
-{{-- ================= CONCEPTO ================= --}}
+{{-- ================= CONCEPTOS ================= --}}
 <table class="conceptos">
     <thead>
         <tr>
             <th>#</th>
             <th>Concepto</th>
             <th>Periodo</th>
-            <th>Monto (S/.)</th>
+            <th>Precio Original (S/.)</th>
             <th>Descuento (S/.)</th>
-            <th>Total (S/.)</th>
+            <th>Total Pagado (S/.)</th>
         </tr>
     </thead>
     <tbody>
-        <tr>
-            <td>1</td>
-            <td>{{ $payment->paymentConcept->nombre ?? '—' }}</td>
-            <td>{{ $payment->periodo ?? '—' }}</td>
-            <td>{{ number_format($subtotal, 2) }}</td>
-            <td>{{ number_format($descuento, 2) }}</td>
-            <td><strong>{{ number_format($total, 2) }}</strong></td>
-        </tr>
+        @foreach($payments as $i => $p)
+            @php
+                $periodo = '';
+                if (!empty($p->periodo)) {
+                    try {
+                        $periodo = \Carbon\Carbon::parse($p->periodo . '-01')->locale('es')->translatedFormat('F Y');
+                    } catch (\Exception $e) {
+                        $periodo = $p->periodo;
+                    }
+                } else {
+                    $periodo = '—';
+                }
+
+                $precioOriginal = $p->monto;
+                $totalPagado = $p->monto - $p->descuento;
+            @endphp
+            <tr>
+                <td>{{ $i + 1 }}</td>
+                <td>{{ strtoupper($p->paymentConcept->nombre) }}</td>
+                <td>{{ ucfirst($periodo) }}</td>
+                <td>{{ number_format($precioOriginal, 2) }}</td>
+                <td>{{ number_format($p->descuento, 2) }}</td>
+                <td><strong>{{ number_format($totalPagado, 2) }}</strong></td>
+            </tr>
+        @endforeach
     </tbody>
 </table>
 
@@ -218,13 +218,10 @@
     </tr>
 </table>
 
-{{-- ================= FOOTER ================= --}}
 <div class="footer">
     <p>------------------------------------------</p>
     <p><strong>Firma y sello de Secretaría</strong></p>
-    <br>
-    <p>Gracias por su puntualidad en los pagos.</p>
-    <p>Este documento es un comprobante válido emitido por el sistema escolar.</p>
+    <p>Documento generado automáticamente por el sistema escolar</p>
 </div>
 
 </body>

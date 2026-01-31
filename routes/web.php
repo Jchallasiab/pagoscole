@@ -34,11 +34,15 @@ Route::get('/dashboard', [DashboardController::class, 'index'])->middleware('aut
 Route::middleware(['auth', 'role:admin|secretaria'])->group(function () {
 
     // 👉 Gestión de estudiantes, matrículas y pagos (ambos pueden)
+    Route::get('/students/search', [StudentController::class, 'search'])->name('students.search');
     Route::resource('/students', StudentController::class);
     Route::get('/enrollments/sections', [EnrollmentController::class, 'getSections'])
     ->name('enrollments.sections');
     Route::resource('/enrollments', EnrollmentController::class);
-    
+    Route::get('/voucher/{filename}', [PaymentController::class, 'verVoucher'])
+    ->name('voucher.view');
+
+
     Route::resource('/payments', PaymentController::class);
     Route::get('/enrollments/{id}/voucher', [EnrollmentController::class, 'voucher'])->name('enrollments.voucher');
     Route::get('/enrollments/export/excel',[EnrollmentController::class, 'exportExcel'])->name('enrollments.export.excel');
