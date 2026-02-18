@@ -124,10 +124,10 @@
                                             <span class="input-group-text">S/</span>
                                             <input type="number" step="0.01" class="form-control"
                                                 name="concepts[{{ $concept->id }}][monto]"
-                                                value="{{ $payment->monto ?? '' }}">
+                                                value="{{ $payment->monto ?? '' }}" placeholder="Monto">
                                             <input type="number" step="0.01" class="form-control"
                                                 name="concepts[{{ $concept->id }}][descuento]"
-                                                value="{{ $payment->descuento ?? '' }}">
+                                                value="{{ $payment->descuento ?? '' }}" placeholder="Descuento">
                                             <select class="form-select"
                                                 name="concepts[{{ $concept->id }}][metodo_pago]">
                                                 <option value="">Método</option>

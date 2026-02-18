@@ -107,9 +107,9 @@
                                         <div class="input-group">
                                             <span class="input-group-text">S/</span>
                                             <input type="number" step="0.01" class="form-control"
-                                                name="concepts[{{ $concept->id }}][monto]">
+                                                name="concepts[{{ $concept->id }}][monto]" placeholder="Monto">
                                             <input type="number" step="0.01" class="form-control"
-                                                name="concepts[{{ $concept->id }}][descuento]">
+                                                name="concepts[{{ $concept->id }}][descuento]" placeholder="Descuento">
                                             <select class="form-select"
                                                 name="concepts[{{ $concept->id }}][metodo_pago]">
                                                 <option value="">Método</option>

@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>Comprobante de Pago</title>
-
     <style>
         body {
             font-family: Arial, Helvetica, sans-serif;
@@ -12,100 +11,56 @@
             margin: 0;
             padding: 0;
         }
-
         .header {
             width: 100%;
             border-bottom: 2px solid #000;
             margin-bottom: 15px;
             padding-bottom: 10px;
         }
-
         .header-table {
             width: 100%;
         }
-
-        .logo {
-            width: 80px;
-        }
-
+        .logo { width: 80px; }
         .title h2, .title h3 {
             margin: 0;
             text-transform: uppercase;
         }
-
         .title h2 { font-size: 16px; }
         .title h3 { font-size: 15px; }
-
-        .title p {
-            margin: 4px 0 0 0;
-            font-size: 12px;
-        }
-
+        .title p { margin: 4px 0 0 0; font-size: 12px; }
         .box {
             border: 1px solid #000;
             padding: 10px;
             margin-bottom: 12px;
         }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .info td {
-            padding: 4px;
-        }
-
+        table { width: 100%; border-collapse: collapse; }
+        .info td { padding: 4px; }
         .conceptos th, .conceptos td {
             border: 1px solid #000;
             padding: 6px;
             text-align: center;
         }
-
-        .conceptos thead {
-            background-color: #f2f2f2;
-        }
-
-        .totals {
-            width: 100%;
-            margin-top: 10px;
-        }
-
-        .totals td {
-            padding: 5px;
-        }
-
-        .totals .label {
-            text-align: right;
-            width: 70%;
-        }
-
-        .totals .value {
-            text-align: right;
-            width: 30%;
-        }
-
+        .conceptos thead { background-color: #f2f2f2; }
+        .totals { width: 100%; margin-top: 10px; }
+        .totals td { padding: 5px; }
+        .totals .label { text-align: right; width: 70%; }
+        .totals .value { text-align: right; width: 30%; }
         .footer {
             margin-top: 35px;
             text-align: center;
             font-size: 11px;
-        }
-
-        .align-right {
-            text-align: right;
         }
     </style>
 </head>
 <body>
 
 @php
-    $subtotal  = $payments->sum(fn($p) => $p->monto);      // Precio original sin descuento
-    $descuento = $payments->sum('descuento');              // Total descuentos
-    $total     = $subtotal - $descuento;                   // Total realmente pagado
+    $subtotal  = $payments->sum(fn($p) => $p->monto);
+    $descuento = $payments->sum('descuento');
+    $total     = $subtotal - $descuento;
     $payment   = $payments->first();
-
-    // Detectar si hay mensualidades
     $tieneMensualidades = $payments->contains(fn($p) => $p->paymentConcept->es_mensual ?? false);
+    $hayDescuento = $payments->contains(fn($p) => $p->descuento > 0);
 @endphp
 
 {{-- ================= HEADER ================= --}}
@@ -169,33 +124,28 @@
             <th>Concepto</th>
             <th>Periodo</th>
             <th>Precio Original (S/.)</th>
-            <th>Descuento (S/.)</th>
+            @if ($hayDescuento)
+                <th>Descuento (S/.)</th>
+            @endif
             <th>Total Pagado (S/.)</th>
         </tr>
     </thead>
     <tbody>
         @foreach($payments as $i => $p)
             @php
-                $periodo = '';
-                if (!empty($p->periodo)) {
-                    try {
-                        $periodo = \Carbon\Carbon::parse($p->periodo . '-01')->locale('es')->translatedFormat('F Y');
-                    } catch (\Exception $e) {
-                        $periodo = $p->periodo;
-                    }
-                } else {
-                    $periodo = '—';
-                }
-
+                // Si no hay periodo, mostrar "Único"
+                $periodo = $p->periodo ? ucfirst($p->periodo) : 'Único';
                 $precioOriginal = $p->monto;
                 $totalPagado = $p->monto - $p->descuento;
             @endphp
             <tr>
                 <td>{{ $i + 1 }}</td>
                 <td>{{ strtoupper($p->paymentConcept->nombre) }}</td>
-                <td>{{ ucfirst($periodo) }}</td>
+                <td>{{ $periodo }}</td>
                 <td>{{ number_format($precioOriginal, 2) }}</td>
-                <td>{{ number_format($p->descuento, 2) }}</td>
+                @if ($hayDescuento)
+                    <td>{{ number_format($p->descuento, 2) }}</td>
+                @endif
                 <td><strong>{{ number_format($totalPagado, 2) }}</strong></td>
             </tr>
         @endforeach
@@ -208,10 +158,12 @@
         <td class="label"><strong>Subtotal:</strong></td>
         <td class="value">S/. {{ number_format($subtotal, 2) }}</td>
     </tr>
-    <tr>
-        <td class="label"><strong>Descuento:</strong></td>
-        <td class="value">S/. {{ number_format($descuento, 2) }}</td>
-    </tr>
+    @if ($hayDescuento)
+        <tr>
+            <td class="label"><strong>Descuento:</strong></td>
+            <td class="value">S/. {{ number_format($descuento, 2) }}</td>
+        </tr>
+    @endif
     <tr>
         <td class="label"><strong>Total Pagado:</strong></td>
         <td class="value"><strong>S/. {{ number_format($total, 2) }}</strong></td>

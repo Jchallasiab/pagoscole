@@ -346,14 +346,21 @@ class EnrollmentController extends Controller
         $pdf->SetFont('Arial', 'B', 12);
         $pdf->Cell(0, 8, utf8_decode('DETALLE DE PAGOS'), 0, 1);
 
+        // Determinar si hay algún descuento
+        $hayDescuento = $payments->contains(function ($p) {
+            return $p->descuento > 0;
+        });
+
         // Encabezados
         $pdf->SetFont('Arial', 'B', 10);
         $pdf->Cell(45, 8, 'Concepto', 1);
         $pdf->Cell(25, 8, 'Periodo', 1);
         $pdf->Cell(25, 8, 'Monto', 1);
-        $pdf->Cell(25, 8, 'Desc.', 1);
+        if ($hayDescuento) {
+            $pdf->Cell(25, 8, 'Desc.', 1);
+        }
         $pdf->Cell(25, 8, 'Total', 1);
-        $pdf->Cell(30, 8, 'Metodo', 1, 1);
+        $pdf->Cell(30, 8,utf8_decode('Método'), 1, 1);
 
         $pdf->SetFont('Arial', '', 10);
         $totalGeneral = 0;
@@ -363,16 +370,24 @@ class EnrollmentController extends Controller
             $totalGeneral += $total;
 
             $pdf->Cell(45, 8, utf8_decode($p->paymentConcept->nombre), 1);
-            $pdf->Cell(25, 8, utf8_decode($p->periodo ?? '—'), 1);
+
+            // Mostrar "Único" si no hay periodo
+            $pdf->Cell(25, 8, utf8_decode($p->periodo ? $p->periodo : 'Único'), 1);
+
             $pdf->Cell(25, 8, 'S/ '.number_format($p->monto, 2), 1);
-            $pdf->Cell(25, 8, 'S/ '.number_format($p->descuento, 2), 1);
+
+            if ($hayDescuento) {
+                $pdf->Cell(25, 8, 'S/ '.number_format($p->descuento, 2), 1);
+            }
+
             $pdf->Cell(25, 8, 'S/ '.number_format($total, 2), 1);
             $pdf->Cell(30, 8, ucfirst($p->metodo_pago), 1, 1);
         }
 
         // TOTAL GENERAL
         $pdf->SetFont('Arial', 'B', 11);
-        $pdf->Cell(120, 8, 'TOTAL PAGADO', 1);
+        $anchoTotal = $hayDescuento ? 120 : 95; // ajustar ancho según columnas
+        $pdf->Cell($anchoTotal, 8, 'TOTAL PAGADO', 1);
         $pdf->Cell(55, 8, 'S/ '.number_format($totalGeneral, 2), 1, 1);
 
         /* ======================
@@ -382,7 +397,7 @@ class EnrollmentController extends Controller
 
         $fotoPath = $student->photo_path
             ? storage_path('app/public/'.$student->photo_path)
-            : public_path('img/default-user.jpg');
+            : public_path('img/logotesla.jpg');
 
         if (file_exists($fotoPath)) {
             $pdf->Image($fotoPath, 25, $y, 35, 45);
@@ -402,6 +417,7 @@ class EnrollmentController extends Controller
             'voucher_matricula' => $pdfPath
         ]);
     }
+
     /* =========================
        VER PDF
     ========================== */
