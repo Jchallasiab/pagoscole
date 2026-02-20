@@ -303,6 +303,32 @@ class EnrollmentController extends Controller
         }
 
         /* ======================
+        N° BOLETA (RECTÁNGULO)
+        ====================== */
+        // Número del último pago con ceros a la izquierda
+        $ultimoPago = $payments->last();
+        $numeroBoleta = $ultimoPago ? str_pad($ultimoPago->id, 6, '0', STR_PAD_LEFT) : '000000';
+
+        // Rectángulo en esquina superior derecha
+        $xRect = 165;  // posición horizontal
+        $yRect = 12;   // posición vertical
+        $wRect = 30;   // ancho
+        $hRect = 18;   // alto
+
+        // Dibuja el rectángulo
+        $pdf->Rect($xRect, $yRect, $wRect, $hRect);
+
+        // Centrar el número dentro del rectángulo
+        $pdf->SetFont('Arial', 'B', 14);
+        $pdf->SetXY($xRect, $yRect + 5);
+        $pdf->Cell($wRect, 8, $numeroBoleta, 0, 0, 'C'); // C = centrado horizontal y vertical visual
+
+        // Etiqueta debajo del rectángulo
+        $pdf->SetFont('Arial', 'B', 9);
+        $pdf->SetXY($xRect, $yRect + $hRect + 2);
+        $pdf->Cell($wRect, 6, utf8_decode('N° BOLETA'), 0, 0, 'C');
+
+        /* ======================
         ENCABEZADO
         ====================== */
         $pdf->SetXY(45, 15);
@@ -346,10 +372,7 @@ class EnrollmentController extends Controller
         $pdf->SetFont('Arial', 'B', 12);
         $pdf->Cell(0, 8, utf8_decode('DETALLE DE PAGOS'), 0, 1);
 
-        // Determinar si hay algún descuento
-        $hayDescuento = $payments->contains(function ($p) {
-            return $p->descuento > 0;
-        });
+        $hayDescuento = $payments->contains(fn($p) => $p->descuento > 0);
 
         // Encabezados
         $pdf->SetFont('Arial', 'B', 10);
@@ -360,7 +383,7 @@ class EnrollmentController extends Controller
             $pdf->Cell(25, 8, 'Desc.', 1);
         }
         $pdf->Cell(25, 8, 'Total', 1);
-        $pdf->Cell(30, 8,utf8_decode('Método'), 1, 1);
+        $pdf->Cell(30, 8, utf8_decode('Método'), 1, 1);
 
         $pdf->SetFont('Arial', '', 10);
         $totalGeneral = 0;
@@ -370,23 +393,18 @@ class EnrollmentController extends Controller
             $totalGeneral += $total;
 
             $pdf->Cell(45, 8, utf8_decode($p->paymentConcept->nombre), 1);
-
-            // Mostrar "Único" si no hay periodo
-            $pdf->Cell(25, 8, utf8_decode($p->periodo ? $p->periodo : 'Único'), 1);
-
+            $pdf->Cell(25, 8, utf8_decode($p->periodo ?: 'Único'), 1);
             $pdf->Cell(25, 8, 'S/ '.number_format($p->monto, 2), 1);
-
             if ($hayDescuento) {
                 $pdf->Cell(25, 8, 'S/ '.number_format($p->descuento, 2), 1);
             }
-
             $pdf->Cell(25, 8, 'S/ '.number_format($total, 2), 1);
             $pdf->Cell(30, 8, ucfirst($p->metodo_pago), 1, 1);
         }
 
         // TOTAL GENERAL
         $pdf->SetFont('Arial', 'B', 11);
-        $anchoTotal = $hayDescuento ? 120 : 95; // ajustar ancho según columnas
+        $anchoTotal = $hayDescuento ? 120 : 95;
         $pdf->Cell($anchoTotal, 8, 'TOTAL PAGADO', 1);
         $pdf->Cell(55, 8, 'S/ '.number_format($totalGeneral, 2), 1, 1);
 
@@ -394,7 +412,6 @@ class EnrollmentController extends Controller
         FOTO + QR
         ====================== */
         $y = $pdf->GetY() + 10;
-
         $fotoPath = $student->photo_path
             ? storage_path('app/public/'.$student->photo_path)
             : public_path('img/logotesla.jpg');
@@ -417,7 +434,6 @@ class EnrollmentController extends Controller
             'voucher_matricula' => $pdfPath
         ]);
     }
-
     /* =========================
        VER PDF
     ========================== */

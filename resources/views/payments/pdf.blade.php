@@ -16,6 +16,7 @@
             border-bottom: 2px solid #000;
             margin-bottom: 15px;
             padding-bottom: 10px;
+            position: relative;
         }
         .header-table {
             width: 100%;
@@ -28,6 +29,36 @@
         .title h2 { font-size: 16px; }
         .title h3 { font-size: 15px; }
         .title p { margin: 4px 0 0 0; font-size: 12px; }
+
+        /* ✅ Recuadro igual, número centrado sin flex */
+        .boleta-numero {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            border: 1.5px solid #000;
+            width: 90px;
+            height: 50px;
+            text-align: center;           /* Centrado horizontal */
+            font-weight: bold;
+            font-size: 15px;
+            color: #000;
+            background-color: transparent;
+            line-height: 40px;            /* 🔹 Centrado vertical (igual a height) */
+            margin: 0;
+            padding: 0;
+        }
+
+        .boleta-label {
+            position: absolute;
+            top: 65px;
+            right: 28px;
+            font-size: 11px;
+            font-weight: bold;
+            color: #000;
+            text-transform: uppercase;
+            text-align: center;
+        }
+
         .box {
             border: 1px solid #000;
             padding: 10px;
@@ -59,6 +90,8 @@
     $descuento = $payments->sum('descuento');
     $total     = $subtotal - $descuento;
     $payment   = $payments->first();
+    $ultimoPago = $payments->last();
+    $numeroBoleta = $ultimoPago ? str_pad($ultimoPago->id, 6, '0', STR_PAD_LEFT) : '000000';
     $tieneMensualidades = $payments->contains(fn($p) => $p->paymentConcept->es_mensual ?? false);
     $hayDescuento = $payments->contains(fn($p) => $p->descuento > 0);
 @endphp
@@ -80,6 +113,12 @@
             </td>
         </tr>
     </table>
+
+    {{-- 🔹 Recuadro fijo, número centrado vertical y horizontal --}}
+    @if($ultimoPago)
+        <div class="boleta-numero">{{ $numeroBoleta }}</div>
+        <div class="boleta-label">N° BOLETA</div>
+    @endif
 </div>
 
 {{-- ================= DATOS DEL ESTUDIANTE ================= --}}
@@ -133,7 +172,6 @@
     <tbody>
         @foreach($payments as $i => $p)
             @php
-                // Si no hay periodo, mostrar "Único"
                 $periodo = $p->periodo ? ucfirst($p->periodo) : 'Único';
                 $precioOriginal = $p->monto;
                 $totalPagado = $p->monto - $p->descuento;

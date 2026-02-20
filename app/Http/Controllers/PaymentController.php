@@ -383,5 +383,25 @@ class PaymentController extends Controller
             return back()->withErrors(['error' => $e->getMessage()]);
         }
     }
+        /** ================= ELIMINAR PAGO ================= */
+    public function destroy(Payment $payment)
+    {
+        try {
+            // Eliminar el archivo PDF asociado si existe
+            if ($payment->voucher && Storage::disk('public')->exists($payment->voucher)) {
+                Storage::disk('public')->delete($payment->voucher);
+            }
+
+            // Eliminar el registro del pago
+            $payment->delete();
+
+            return redirect()
+                ->route('payments.index')
+                ->with('success', 'El pago y su comprobante fueron eliminados correctamente.');
+
+        } catch (\Throwable $e) {
+            return back()->withErrors(['error' => 'No se pudo eliminar el pago: ' . $e->getMessage()]);
+        }
+    }
 
 }

@@ -22,11 +22,6 @@
                         <!-- FILA 1 -->
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="fw-bold">ESTUDIANTE</label>
-                                <select name="student_id" id="student_id" class="form-control" required></select>
-                            </div>
-
-                            <div class="col-md-6 mb-3">
                                 <label class="fw-bold">AÑO ESCOLAR</label>
                                 <select id="school_year_id" name="school_year_id" class="form-control" required>
                                     <option value="">Seleccione año</option>
@@ -34,6 +29,10 @@
                                         <option value="{{ $sy->id }}">{{ $sy->nombre }}</option>
                                     @endforeach
                                 </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="fw-bold">ESTUDIANTE</label>
+                                <select name="student_id" id="student_id" class="form-control" required></select>
                             </div>
                         </div>
 
